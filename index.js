@@ -1,44 +1,75 @@
 const express = require("express");
+const UAParser = require("ua-parser-js");
 const requestIp = require("request-ip");
-const useragent = require("useragent");
-const geoip = require("geoip-lite");
 
 const app = express();
-const port = 3000;
 
-// Middleware للحصول على عنوان IP
-app.use(requestIp.mw());
+app.get("/", async (req, res) => {
+  try {
+    // الحصول على IP العميل
+    const clientIp = requestIp.getClientIp(req);
 
-// Route للصفحة الرئيسية
-app.get("/", (req, res) => {
-  // الحصول على عنوان IP
-  const ip = req.clientIp;
+    // تحليل User-Agent
+    const ua = new UAParser(req.headers["user-agent"]);
+    const userAgent = ua.getResult();
 
-  // تحليل معلومات المتصفح
-  const agent = useragent.parse(req.headers["user-agent"]);
+    // الحصول على معلومات الموقع الجغرافي باستخدام ipapi.co
+    let geoData = null;
+    try {
+      const geoResponse = await fetch(`http://ip-api.com/json/${clientIp}`);
+      geoData = await geoResponse.json();
+    } catch (error) {
+      console.error("Error fetching geo data:", error);
+    }
 
-  // الحصول على معلومات الموقع الجغرافي
-  const geo = geoip.lookup(ip);
+    const visitorInfo = {
+      ip: clientIp,
+      datetime: new Date().toISOString(),
 
-  // تسجيل المعلومات
-  const logEntry = {
-    ip: ip,
-    country: geo ? geo.country : "غير معروف",
-    city: geo ? geo.city : "غير معروف",
-    browser: agent.toAgent(), // اسم المتصفح
-    os: agent.os.toString(), // نظام التشغيل
-    device: agent.device.toString(), // نوع الجهاز
-    timestamp: new Date().toISOString(), // الوقت الحالي
-  };
+      // معلومات المتصفح والنظام
+      browser: {
+        name: userAgent.browser.name,
+        version: userAgent.browser.version,
+      },
+      operatingSystem: {
+        name: userAgent.os.name,
+        version: userAgent.os.version,
+      },
+      device: {
+        type: userAgent.device.type || "desktop",
+        model: userAgent.device.model,
+        vendor: userAgent.device.vendor,
+      },
 
-  // عرض المعلومات في المتصفح
-  res.send(`<pre>${JSON.stringify(logEntry, null, 2)}</pre>`);
+      // معلومات جغرافية
+      location: geoData
+        ? {
+            country: geoData.country,
+            region: geoData.regionName,
+            city: geoData.city,
+            timezone: geoData.timezone,
+            isp: geoData.isp,
+          }
+        : null,
 
-  // طباعة المعلومات في سجل الخادم
-  console.log("تم تسجيل الطلب:", logEntry);
+      // معلومات إضافية من الطلب
+      headers: {
+        language: req.headers["accept-language"],
+        referer: req.headers["referer"],
+        host: req.headers["host"],
+      },
+    };
+
+    res.json(visitorInfo);
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
-// تشغيل الخادم
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`الخادم يعمل على http://localhost:${port}`);
+  console.log(`Server running on port ${port}`);
 });
+
+module.exports = app;
